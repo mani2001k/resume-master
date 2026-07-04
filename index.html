@@ -679,7 +679,7 @@
             processingTime: document.getElementById('processingTime')
         };
 
-        // ============ FILE HANDLING ============
+        // ============ FILE HANDLING - FIXED FOR MULTIPLE FILES ============
         elements.dropzone.addEventListener('click', () => elements.fileInput.click());
         elements.fileInput.addEventListener('change', handleFileSelect);
 
@@ -693,11 +693,21 @@
         elements.dropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             elements.dropzone.classList.remove('border-orange-500', 'bg-orange-500/10');
-            handleFiles(e.dataTransfer.files);
+            const files = e.dataTransfer.files;
+            const fileArray = Array.from(files);
+            handleFiles(fileArray);
         });
 
+        // ============ FIXED: Handle file selection ============
         function handleFileSelect(e) {
-            handleFiles(e.target.files);
+            const files = e.target.files;
+            debugLog(`📄 Selected ${files.length} files from input`);
+            
+            // Convert FileList to array and process all files
+            const fileArray = Array.from(files);
+            handleFiles(fileArray);
+            
+            // Reset the input so the same files can be selected again
             e.target.value = '';
         }
 
@@ -714,9 +724,13 @@
             });
         }
 
-        // ============ handleFiles WITH PDF PARSING ============
+        // ============ FIXED: handleFiles with proper array handling ============
         async function handleFiles(files) {
+            // files is now an array from the caller
             debugLog(`📄 Processing ${files.length} files...`);
+            
+            // Show processing indicator
+            elements.statusText.innerHTML = '<i class="fas fa-spinner fa-spin text-orange-500 mr-1"></i> Processing files...';
             
             for (const file of files) {
                 if (file.size > 5 * 1024 * 1024) {
@@ -727,6 +741,7 @@
                 try {
                     let content = '';
                     
+                    // ============ HANDLE TEXT FILES ============
                     if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
                         content = await file.text();
                         debugLog(`📄 Read text file: ${file.name} (${content.length} chars)`);
@@ -734,13 +749,23 @@
                         continue;
                     }
                     
+                    // ============ HANDLE PDF FILES ============
                     if (file.name.endsWith('.pdf')) {
                         debugLog(`📄 Parsing PDF: ${file.name}...`);
+                        
+                        // Convert to base64
                         const base64 = await fileToBase64(file);
+                        
+                        // Call the Netlify function
                         const response = await fetch('/.netlify/functions/parse-pdf', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ file: base64, filename: file.name })
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                file: base64,
+                                filename: file.name
+                            })
                         });
 
                         if (!response.ok) {
@@ -749,17 +774,24 @@
                         }
 
                         const data = await response.json();
+                        
                         if (data.success && data.text) {
                             content = data.text.trim();
                             debugLog(`✅ PDF parsed: ${file.name} (${data.pages} pages, ${content.length} chars)`);
                         } else {
                             throw new Error(data.error || 'Failed to parse PDF');
                         }
-                    } else if (file.name.endsWith('.docx')) {
+                    }
+                    
+                    // ============ HANDLE DOCX FILES ============
+                    else if (file.name.endsWith('.docx')) {
                         debugLog(`📄 DOCX file detected: ${file.name}`);
                         content = `[DOCX file: ${file.name} - Please convert to .txt or .pdf for parsing]`;
                         debugLog(`📄 Added DOCX file: ${file.name} (not parsed)`);
-                    } else {
+                    }
+                    
+                    // ============ OTHER FILES ============
+                    else {
                         content = `[File: ${file.name} - Unsupported format]`;
                         debugLog(`📄 Added unsupported file: ${file.name}`);
                     }
@@ -770,6 +802,7 @@
                     
                 } catch (error) {
                     debugLog(`❌ Error processing ${file.name}:`, error);
+                    // Add the file with an error message
                     resumes.push({ 
                         name: file.name, 
                         content: `[Error processing ${file.name}: ${error.message}]`,
@@ -781,6 +814,7 @@
             
             renderResumeList();
             elements.resumeCount.textContent = resumes.length;
+            elements.statusText.innerHTML = '<i class="fas fa-circle text-green-500 text-xs mr-1"></i> Ready';
             debugLog(`✅ Total resumes processed: ${resumes.length}`);
         }
 
