@@ -6,6 +6,6 @@
     "build": "echo 'No build needed'"
   },
   "dependencies": {
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.4"
   }
 }
