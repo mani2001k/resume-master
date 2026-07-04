@@ -9,18 +9,30 @@
     <style>
         /* ============ DOCTOR STRANGE THEME ============ */
         .strange-bg {
-            background: 
-                radial-gradient(ellipse at 20% 50%, rgba(255, 140, 0, 0.15) 0%, transparent 60%),
-                radial-gradient(ellipse at 80% 50%, rgba(255, 200, 0, 0.1) 0%, transparent 60%),
-                radial-gradient(ellipse at 50% 100%, rgba(200, 100, 0, 0.2) 0%, transparent 40%),
-                linear-gradient(135deg, #0a0015 0%, #1a0a2e 25%, #2d1b4e 50%, #1a0a2e 75%, #0a0015 100%);
-            background-attachment: fixed;
-            min-height: 100vh;
             position: relative;
+            min-height: 100vh;
             overflow-x: hidden;
+            background-color: #0a0015;
         }
-        
+
+        /* Background image with overlay */
         .strange-bg::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: url('https://res.cloudinary.com/da52innak/image/upload/v1783157354/arka-das-13es_mv2nud.jpg');
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            opacity: 0.3; /* Adjust transparency (0-1) */
+            z-index: -1;
+        }
+
+        /* Keep the magical particles on top */
+        .strange-bg::after {
             content: '';
             position: fixed;
             top: 0;
@@ -41,7 +53,7 @@
             pointer-events: none;
             z-index: 0;
         }
-        
+                
         @keyframes floatParticles {
             0% { transform: translateY(0px) rotate(0deg); }
             100% { transform: translateY(-200px) rotate(360deg); }
