@@ -51,6 +51,13 @@
             transform: translateY(-2px);
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }
+        .file-processing {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body class="min-h-screen gradient-bg">
@@ -409,31 +416,107 @@
             e.target.value = '';
         }
 
+        // ============ CONVERT FILE TO BASE64 ============
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    // Remove the data URL prefix
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // ============ UPDATED handleFiles WITH PDF PARSING ============
         async function handleFiles(files) {
             debugLog(`📄 Processing ${files.length} files...`);
+            
             for (const file of files) {
                 if (file.size > 5 * 1024 * 1024) {
                     showError(`${file.name} is too large (max 5MB)`);
                     continue;
                 }
+                
                 try {
                     let content = '';
+                    
+                    // ============ HANDLE TEXT FILES ============
                     if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
                         content = await file.text();
-                        debugLog(`📄 Read text file: ${file.name}`);
-                    } else {
-                        content = `[Content from ${file.name}]`;
-                        debugLog(`📄 Added PDF/DOCX file: ${file.name}`);
+                        debugLog(`📄 Read text file: ${file.name} (${content.length} chars)`);
+                        resumes.push({ name: file.name, content: content, size: file.size });
+                        continue;
                     }
-                    resumes.push({ name: file.name, content: content, size: file.size });
+                    
+                    // ============ HANDLE PDF FILES ============
+                    if (file.name.endsWith('.pdf')) {
+                        debugLog(`📄 Parsing PDF: ${file.name}...`);
+                        
+                        // Convert to base64
+                        const base64 = await fileToBase64(file);
+                        
+                        // Call the Netlify function
+                        const response = await fetch('/.netlify/functions/parse-pdf', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                file: base64,
+                                filename: file.name
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error || `HTTP ${response.status}`);
+                        }
+
+                        const data = await response.json();
+                        
+                        if (data.success && data.text) {
+                            content = data.text.trim();
+                            debugLog(`✅ PDF parsed: ${file.name} (${data.pages} pages, ${content.length} chars)`);
+                        } else {
+                            throw new Error(data.error || 'Failed to parse PDF');
+                        }
+                    }
+                    
+                    // ============ HANDLE DOCX FILES ============
+                    else if (file.name.endsWith('.docx')) {
+                        debugLog(`📄 DOCX file detected: ${file.name}`);
+                        content = `[DOCX file: ${file.name} - Please convert to .txt or .pdf for parsing]`;
+                        debugLog(`📄 Added DOCX file: ${file.name} (not parsed)`);
+                    }
+                    
+                    // ============ OTHER FILES ============
+                    else {
+                        content = `[File: ${file.name} - Unsupported format]`;
+                        debugLog(`📄 Added unsupported file: ${file.name}`);
+                    }
+                    
+                    if (content) {
+                        resumes.push({ name: file.name, content: content, size: file.size });
+                    }
+                    
                 } catch (error) {
-                    debugLog(`❌ Error reading ${file.name}:`, error);
-                    showError(`Failed to read ${file.name}`);
+                    debugLog(`❌ Error processing ${file.name}:`, error);
+                    // Add the file with an error message
+                    resumes.push({ 
+                        name: file.name, 
+                        content: `[Error processing ${file.name}: ${error.message}]`,
+                        size: file.size 
+                    });
+                    showError(`Failed to process ${file.name}: ${error.message}`);
                 }
             }
+            
             renderResumeList();
             elements.resumeCount.textContent = resumes.length;
-            debugLog(`✅ Total resumes: ${resumes.length}`);
+            debugLog(`✅ Total resumes processed: ${resumes.length}`);
         }
 
         function renderResumeList() {
@@ -447,6 +530,9 @@
                         <i class="fas fa-file-alt text-blue-500"></i>
                         <span class="font-medium text-gray-700 truncate">${resume.name}</span>
                         <span class="text-xs text-gray-400 flex-shrink-0">(${(resume.size / 1024).toFixed(1)} KB)</span>
+                        ${resume.content && resume.content.includes('[Content from') || resume.content.includes('[Error processing') ? 
+                            '<span class="text-xs text-yellow-500 ml-2">⚠️ Not parsed</span>' : 
+                            '<span class="text-xs text-green-500 ml-2">✅ Parsed</span>'}
                     </div>
                     <button onclick="removeResume(${index})" class="text-red-400 hover:text-red-600 transition-all ml-2 flex-shrink-0 hover:scale-110">
                         <i class="fas fa-times"></i>
@@ -489,7 +575,7 @@
             }
         }
 
-        // ============ POLL FOR RESULTS - FIXED ============
+        // ============ POLL FOR RESULTS ============
         async function pollResults(kickoffId, maxAttempts = 30, interval = 2000) {
             debugLog(`🔄 Polling for results... (max ${maxAttempts} attempts)`);
             isPolling = true;
@@ -499,7 +585,7 @@
                     const status = await checkStatus(kickoffId);
                     debugLog(`📊 Status check ${i + 1}:`, status);
                     
-                    // ============ FIX: Check for SUCCESS state ============
+                    // Check for SUCCESS state (CrewAI uses "SUCCESS")
                     if (status.state === 'SUCCESS') {
                         debugLog('✅ Results ready!');
                         isPolling = false;
@@ -621,7 +707,7 @@
                 const data = await response.json();
                 debugLog('✅ Success! Data received:', data);
                 
-                // ============ POLL FOR RESULTS ============
+                // Poll for results
                 if (data.kickoff_id) {
                     debugLog(`📋 Kickoff ID: ${data.kickoff_id}`);
                     
@@ -678,7 +764,6 @@
                 // Try to parse markdown into structured data
                 const lines = data.result.split('\n');
                 let currentCandidate = null;
-                let inTable = false;
                 
                 for (const line of lines) {
                     // Find candidates by looking for "### Rank #X:" pattern
