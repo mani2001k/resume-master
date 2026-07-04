@@ -522,18 +522,29 @@
                     body: JSON.stringify(requestBody)
                 });
 
+                // Read response as text first so we can safely handle HTML/error pages
+                const contentType = response.headers.get('content-type') || '';
+                const responseText = await response.text();
                 debugLog(`📡 Response status: ${response.status}`);
                 debugLog('📡 Response headers:', Object.fromEntries(response.headers));
+                debugLog('📡 Response text snippet:', responseText.slice(0, 1000));
 
                 updateProgress(60, 'AI is analyzing with SBERT + Gemini...');
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    debugLog('❌ Error response:', errorData);
-                    throw new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
+                // If server didn't return JSON, surface the text for debugging
+                if (!contentType.includes('application/json')) {
+                    let parsed = null;
+                    try { parsed = JSON.parse(responseText); } catch (e) { parsed = null; }
+                    const errorMessage = (parsed && (parsed.error || parsed.message)) || responseText.substring(0, 1000);
+                    if (!response.ok) {
+                        debugLog('❌ Non-JSON error response:', errorMessage);
+                        throw new Error(errorMessage);
+                    }
+                    debugLog('❌ Received non-JSON response when JSON expected');
+                    throw new Error('Invalid JSON response from server: ' + errorMessage);
                 }
 
-                const data = await response.json();
+                const data = JSON.parse(responseText);
                 debugLog('✅ Success! Data received:', data);
                 
                 updateProgress(90, 'Generating rankings...');
