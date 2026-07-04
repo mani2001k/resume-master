@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Authenticating...</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen gradient-bg flex items-center justify-center p-4">
+    <div class="bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl p-8 max-w-md w-full text-center fade-in">
+        <div class="spinner mx-auto mb-6"></div>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">Authenticating...</h1>
+        <p class="text-gray-600">Please wait while we verify your GitHub account</p>
+        <div id="errorMessage" class="mt-4 hidden">
+            <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600 text-sm">
+                <i class="fas fa-exclamation-circle mr-2"></i>
+                <span id="errorText"></span>
+            </div>
+        </div>
+        <div id="successMessage" class="mt-4 hidden text-green-600">
+            <i class="fas fa-check-circle text-3xl"></i>
+            <p class="mt-2 font-medium">Login successful!</p>
+            <p class="text-sm text-gray-500">Redirecting to app...</p>
+        </div>
+    </div>
+
+    <script>
+        // ============ GITHUB OAUTH CONFIG ============
+        const GITHUB_CLIENT_ID = 'Ov23lidNmqhDkj3hgHtg';
+        const GITHUB_CLIENT_SECRET = '168b493868c5c289ce38fe37ce4d7cfae4c065b0';
+        const REDIRECT_URI = window.location.origin + '/callback.html';
+        
+        async function handleCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const error = urlParams.get('error');
+            
+            if (error) {
+                showError(`GitHub error: ${error}`);
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 4000);
+                return;
+            }
+
+            if (!code) {
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+                return;
+            }
+
+            try {
+                console.log('🔄 Exchanging code for token...');
+                
+                const tokenResponse = await fetch('https://cors-anywhere.herokuapp.com/https://github.com/login/oauth/access_token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        client_id: GITHUB_CLIENT_ID,
+                        client_secret: GITHUB_CLIENT_SECRET,
+                        code: code,
+                        redirect_uri: REDIRECT_URI
+                    })
+                });
+
+                if (!tokenResponse.ok) {
+                    throw new Error(`HTTP error! status: ${tokenResponse.status}`);
+                }
+
+                const tokenData = await tokenResponse.json();
+                
+                if (tokenData.error) {
+                    throw new Error(tokenData.error_description || tokenData.error);
+                }
+
+                if (!tokenData.access_token) {
+                    throw new Error('No access token received');
+                }
+
+                console.log('✅ Token received successfully');
+
+                const userResponse = await fetch('https://api.github.com/user', {
+                    headers: {
+                        'Authorization': `Bearer ${tokenData.access_token}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!userResponse.ok) {
+                    throw new Error(`Failed to get user info: ${userResponse.status}`);
+                }
+
+                const userData = await userResponse.json();
+                console.log('👤 User authenticated:', userData.login);
+
+                localStorage.setItem('github_token', tokenData.access_token);
+                localStorage.setItem('github_user', JSON.stringify(userData));
+
+                document.getElementById('successMessage').classList.remove('hidden');
+
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 1500);
+
+            } catch (error) {
+                console.error('❌ Authentication error:', error);
+                showError(error.message || 'Authentication failed. Please try again.');
+                
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 4000);
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').classList.remove('hidden');
+            document.getElementById('errorText').textContent = message;
+        }
+
+        console.log('🔐 OAuth Callback Handler');
+        console.log('📡 Client ID:', GITHUB_CLIENT_ID);
+        handleCallback();
+    </script>
+</body>
+</html>
