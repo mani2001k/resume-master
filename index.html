@@ -43,6 +43,18 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #764ba2;
         }
+        .debug-console {
+            background: #1a1a2e;
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+            padding: 10px;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 12px;
+            margin-top: 10px;
+            display: none;
+        }
     </style>
 </head>
 <body class="min-h-screen gradient-bg">
@@ -223,6 +235,17 @@
                 </div>
             </div>
 
+            <!-- Debug Console (Hidden by default) -->
+            <div id="debugConsole" class="mt-4 hidden">
+                <div class="bg-gray-900 rounded-xl p-4">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="text-white font-mono text-sm">🐛 Debug Console</h3>
+                        <button onclick="toggleDebug()" class="text-gray-400 hover:text-white text-sm">✕</button>
+                    </div>
+                    <div id="debugLog" class="debug-console" style="display:block; max-height:300px;"></div>
+                </div>
+            </div>
+
             <!-- Footer -->
             <footer class="text-center mt-8 text-sm text-white/70">
                 <div class="flex justify-center items-center gap-4 flex-wrap">
@@ -249,13 +272,64 @@
             CREWAI_ORGANIZATION_ID: '7f687ea5-3f59-47a8-875c-5a9d07a3cb83'  // Your Organization ID
         };
 
+        // ============ DEBUGGING ============
+        let debugLogs = [];
+        
+        function debugLog(message, data) {
+            const timestamp = new Date().toISOString();
+            const logEntry = {
+                time: timestamp,
+                message: message,
+                data: data || null
+            };
+            debugLogs.push(logEntry);
+            
+            // Update debug console if visible
+            const debugElement = document.getElementById('debugLog');
+            if (debugElement) {
+                debugElement.innerHTML += `\n[${timestamp}] ${message}`;
+                if (data) {
+                    debugElement.innerHTML += `\n  ${JSON.stringify(data, null, 2)}`;
+                }
+                debugElement.scrollTop = debugElement.scrollHeight;
+            }
+            
+            console.log(`[${timestamp}]`, message, data || '');
+        }
+
+        function toggleDebug() {
+            const console = document.getElementById('debugConsole');
+            const isHidden = console.classList.contains('hidden');
+            if (isHidden) {
+                console.classList.remove('hidden');
+                // Show debug button in header
+            } else {
+                console.classList.add('hidden');
+            }
+        }
+
+        // Add debug toggle to header
+        document.addEventListener('DOMContentLoaded', function() {
+            const header = document.querySelector('header .flex.items-center.gap-3');
+            if (header) {
+                const debugBtn = document.createElement('button');
+                debugBtn.innerHTML = '🐛';
+                debugBtn.className = 'text-xs text-gray-400 hover:text-gray-600 ml-2';
+                debugBtn.onclick = toggleDebug;
+                header.parentElement.appendChild(debugBtn);
+            }
+        });
+
         // ============ GITHUB OAUTH ============
         function loginWithGitHub() {
+            debugLog('🔐 Starting GitHub login...');
             const authURL = `https://github.com/login/oauth/authorize?client_id=${CONFIG.GITHUB_CLIENT_ID}&redirect_uri=${window.location.origin}/callback.html&scope=read:user`;
+            debugLog('📡 Redirecting to GitHub:', authURL);
             window.location.href = authURL;
         }
 
         function logout() {
+            debugLog('🚪 Logging out...');
             localStorage.removeItem('github_token');
             localStorage.removeItem('github_user');
             document.getElementById('mainApp').style.display = 'none';
@@ -270,6 +344,7 @@
             if (token && user) {
                 try {
                     const userData = JSON.parse(user);
+                    debugLog('✅ User authenticated:', userData.login);
                     document.getElementById('loginScreen').style.display = 'none';
                     document.getElementById('mainApp').style.display = 'block';
                     
@@ -279,10 +354,12 @@
                     
                     return true;
                 } catch (e) {
+                    debugLog('❌ Error parsing user data:', e);
                     localStorage.removeItem('github_user');
                     return false;
                 }
             }
+            debugLog('❌ No user authenticated');
             return false;
         }
 
@@ -336,6 +413,7 @@
         }
 
         async function handleFiles(files) {
+            debugLog(`📄 Processing ${files.length} files...`);
             for (const file of files) {
                 if (file.size > 5 * 1024 * 1024) {
                     showError(`${file.name} is too large (max 5MB)`);
@@ -345,16 +423,20 @@
                     let content = '';
                     if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
                         content = await file.text();
+                        debugLog(`📄 Read text file: ${file.name}`);
                     } else {
                         content = `[Content from ${file.name}]`;
+                        debugLog(`📄 Added PDF/DOCX file: ${file.name}`);
                     }
                     resumes.push({ name: file.name, content: content, size: file.size });
                 } catch (error) {
+                    debugLog(`❌ Error reading ${file.name}:`, error);
                     showError(`Failed to read ${file.name}`);
                 }
             }
             renderResumeList();
             elements.resumeCount.textContent = resumes.length;
+            debugLog(`✅ Total resumes: ${resumes.length}`);
         }
 
         function renderResumeList() {
@@ -377,6 +459,7 @@
         }
 
         window.removeResume = function(index) {
+            debugLog(`🗑️ Removing resume: ${resumes[index].name}`);
             resumes.splice(index, 1);
             renderResumeList();
             elements.resumeCount.textContent = resumes.length;
@@ -387,6 +470,10 @@
 
         async function handleSubmit() {
             const jobDescription = elements.jobDescription.value.trim();
+            
+            debugLog('🚀 Starting resume screening...');
+            debugLog('📝 Job Description:', jobDescription);
+            debugLog('📄 Resumes count:', resumes.length);
             
             if (!jobDescription) {
                 showError('Please enter a job description');
@@ -420,36 +507,40 @@
                         resumes: resumesText
                     }
                 };
-                
-                // ============ HEADERS WITH YOUR CREDENTIALS ============
-                const headers = { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${CONFIG.CREWAI_API_KEY}`,
-                    'X-Crewai-Organization-Id': CONFIG.CREWAI_ORGANIZATION_ID
-                };
+
+                debugLog('📡 Sending request to CrewAI...');
+                debugLog('📡 Request body:', requestBody);
 
                 updateProgress(30, 'Calling CrewAI API...');
                 
-                const response = await fetch(`${CONFIG.CREWAI_API_URL}/run`, {
+                // ============ UPDATED: Use Netlify Proxy with Debugging ============
+                const response = await fetch('/api/crewai-proxy', {
                     method: 'POST',
-                    headers: headers,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                     body: JSON.stringify(requestBody)
                 });
+
+                debugLog(`📡 Response status: ${response.status}`);
+                debugLog('📡 Response headers:', Object.fromEntries(response.headers));
 
                 updateProgress(60, 'AI is analyzing with SBERT + Gemini...');
 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+                    debugLog('❌ Error response:', errorData);
+                    throw new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
                 }
 
                 const data = await response.json();
+                debugLog('✅ Success! Data received:', data);
+                
                 updateProgress(90, 'Generating rankings...');
                 displayResults(data);
                 updateProgress(100, 'Complete! 🎉');
                 elements.statusText.innerHTML = '<i class="fas fa-check-circle text-green-600 mr-1"></i> Complete';
                 
-                // Calculate processing time
                 const endTime = Date.now();
                 const timeTaken = ((endTime - startTime) / 1000).toFixed(1);
                 elements.processingTime.textContent = `${timeTaken}s`;
@@ -459,6 +550,7 @@
                 }, 1000);
 
             } catch (error) {
+                debugLog('❌ Error:', error);
                 showError(error.message || 'Failed to screen resumes. Please try again.');
                 elements.progressSection.classList.add('hidden');
                 elements.statusText.innerHTML = '<i class="fas fa-exclamation-circle text-red-600 mr-1"></i> Error';
@@ -470,6 +562,7 @@
 
         // ============ DISPLAY RESULTS ============
         function displayResults(data) {
+            debugLog('📊 Displaying results...');
             elements.resultsSection.classList.remove('hidden');
             
             let candidates = [];
@@ -525,6 +618,7 @@
             }
 
             elements.candidatesFound.textContent = candidates.length || '0';
+            debugLog(`👥 Candidates found: ${candidates.length}`);
 
             if (candidates.length > 0) {
                 const sorted = candidates.sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -614,9 +708,11 @@
             elements.progressBar.style.width = `${percent}%`;
             elements.progressText.textContent = text;
             elements.progressPercent.textContent = `${percent}%`;
+            debugLog(`📊 Progress: ${percent}% - ${text}`);
         }
 
         function showError(message) {
+            debugLog(`❌ Error: ${message}`);
             elements.errorSection.classList.remove('hidden');
             elements.errorMessage.textContent = message;
             elements.errorSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -638,22 +734,24 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+            debugLog('📥 Report exported');
         });
 
         // ============ KEYBOARD SHORTCUTS ============
         document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key === 'Enter') {
                 e.preventDefault();
+                debugLog('⌨️ Ctrl+Enter pressed - triggering screening');
                 handleSubmit();
             }
         });
 
         // ============ INIT ============
-        console.log('🚀 AI Resume Screener with GitHub Auth');
-        console.log('📡 API URL:', CONFIG.CREWAI_API_URL);
-        console.log('🔑 GitHub Client ID:', CONFIG.GITHUB_CLIENT_ID);
-        console.log('🏢 Organization ID:', CONFIG.CREWAI_ORGANIZATION_ID);
-        console.log('🔐 API Key configured:', CONFIG.CREWAI_API_KEY ? '✅ Yes' : '❌ No');
+        debugLog('🚀 App initialized');
+        debugLog('📡 API URL:', CONFIG.CREWAI_API_URL);
+        debugLog('🔑 GitHub Client ID:', CONFIG.GITHUB_CLIENT_ID);
+        debugLog('🏢 Organization ID:', CONFIG.CREWAI_ORGANIZATION_ID);
+        debugLog('🔐 API Key configured:', CONFIG.CREWAI_API_KEY ? '✅ Yes' : '❌ No');
 
         // Check authentication
         if (!checkAuth()) {
