@@ -1,10 +1,7 @@
-// netlify/functions/parse-pdf.js
-const pdf = require('pdf-parse');
+const { PDFPlumber } = require('node-pdfplumber');
 
 exports.handler = async function(event, context) {
-    console.log('📄 PDF Parse function called');
-    
-    // Handle OPTIONS preflight request
+    // Handle OPTIONS preflight
     if (event.httpMethod === 'OPTIONS') {
         return {
             statusCode: 204,
@@ -16,46 +13,60 @@ exports.handler = async function(event, context) {
         };
     }
 
-    // Only allow POST requests
     if (event.httpMethod !== 'POST') {
         return {
             statusCode: 405,
-            headers: {
-                'Access-Control-Allow-Origin': '*'
-            },
-            body: JSON.stringify({ 
-                error: 'Method not allowed. Use POST.' 
-            })
+            headers: { 'Access-Control-Allow-Origin': '*' },
+            body: JSON.stringify({ error: 'Method not allowed' })
         };
     }
 
     try {
-        // Get the file from the request body
         const { file, filename } = JSON.parse(event.body);
         
         if (!file) {
             return {
                 statusCode: 400,
-                headers: {
-                    'Access-Control-Allow-Origin': '*'
-                },
-                body: JSON.stringify({ 
-                    error: 'No file provided' 
-                })
+                headers: { 'Access-Control-Allow-Origin': '*' },
+                body: JSON.stringify({ error: 'No file provided' })
             };
         }
 
-        console.log(`📄 Parsing PDF: ${filename || 'unnamed'}`);
-
+        console.log(`📄 Processing PDF: ${filename || 'unnamed'}`);
+        
         // Convert base64 to buffer
         const buffer = Buffer.from(file, 'base64');
         
-        // Parse the PDF
-        const data = await pdf(buffer);
+        // Open PDF with node-pdfplumber
+        const pdf = await PDFPlumber.fromBuffer(buffer);
         
-        console.log(`✅ PDF parsed: ${data.numpages} pages, ${data.text.length} characters`);
-
-        // Return the extracted text
+        let fullText = '';
+        let pageCount = pdf.pageCount || 0;
+        
+        // Extract text from all pages
+        for (let i = 0; i < pageCount; i++) {
+            const page = pdf.pages[i];
+            const text = await page.extractText();
+            if (text) {
+                fullText += text + '\n';
+            }
+        }
+        
+        // Clean up
+        pdf.close();
+        
+        // Extract name from first non-empty line
+        const lines = fullText.split('\n').filter(line => line.trim());
+        let name = 'Unknown';
+        if (lines.length > 0) {
+            const firstLine = lines[0].trim();
+            if (firstLine.length > 0 && firstLine.length < 100) {
+                name = firstLine;
+            }
+        }
+        
+        console.log(`✅ PDF parsed: ${filename || 'unknown'} (${pageCount} pages, ${fullText.length} chars)`);
+        
         return {
             statusCode: 200,
             headers: {
@@ -64,13 +75,13 @@ exports.handler = async function(event, context) {
             },
             body: JSON.stringify({
                 success: true,
-                text: data.text,
-                pages: data.numpages,
-                info: data.info,
+                text: fullText,
+                name: name,
+                pages: pageCount,
                 filename: filename || 'unknown'
             })
         };
-
+        
     } catch (error) {
         console.error('❌ PDF parsing error:', error);
         return {
@@ -79,10 +90,9 @@ exports.handler = async function(event, context) {
                 'Access-Control-Allow-Origin': '*',
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ 
+            body: JSON.stringify({
                 success: false,
-                error: error.message || 'Failed to parse PDF',
-                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+                error: error.message || 'Failed to parse PDF'
             })
         };
     }
