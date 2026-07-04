@@ -1,5 +1,8 @@
-# Redirect for OAuth callback
+# OAuth callback - MUST be first
 /callback.html /callback.html 200!
 
-# Proxy for GitHub OAuth
-/.netlify/functions/oauth /api/oauth 200!
+# API routes to functions
+/api/* /.netlify/functions/:splat 200!
+
+# Catch all for SPA (this should be LAST)
+/* /index.html 200
