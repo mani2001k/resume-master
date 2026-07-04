@@ -44,6 +44,20 @@
             font-size: 12px;
             display: none;
         }
+        .result-card {
+            transition: all 0.3s ease;
+        }
+        .result-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        .status-badge {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body class="min-h-screen gradient-bg">
@@ -260,7 +274,7 @@
             CREWAI_API_KEY: 'cd19e1ca8d33',
             CREWAI_ORGANIZATION_ID: '7f687ea5-3f59-47a8-875c-5a9d07a3cb83',
             
-            // ✅ FIXED: Use /kickoff endpoint
+            // Use /kickoff endpoint
             CREWAI_ENDPOINT: '/kickoff'
         };
 
@@ -355,6 +369,7 @@
         // ============ APP STATE ============
         let resumes = [];
         let startTime = 0;
+        let isPolling = false;
 
         // ============ DOM REFS ============
         const elements = {
@@ -454,6 +469,74 @@
             elements.resumeCount.textContent = resumes.length;
         };
 
+        // ============ CHECK STATUS FUNCTION ============
+        async function checkStatus(kickoffId) {
+            debugLog(`🔍 Checking status for: ${kickoffId}`);
+            
+            try {
+                const response = await fetch(`${CONFIG.CREWAI_API_URL}/status/${kickoffId}`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${CONFIG.CREWAI_API_KEY}`,
+                        'X-Crewai-Organization-Id': CONFIG.CREWAI_ORGANIZATION_ID
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Status check failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                debugLog('📊 Status response:', data);
+                
+                return data;
+            } catch (error) {
+                debugLog('❌ Status check error:', error);
+                throw error;
+            }
+        }
+
+        // ============ POLL FOR RESULTS ============
+        async function pollResults(kickoffId, maxAttempts = 30, interval = 2000) {
+            debugLog(`🔄 Polling for results... (max ${maxAttempts} attempts)`);
+            isPolling = true;
+            
+            for (let i = 0; i < maxAttempts; i++) {
+                try {
+                    const status = await checkStatus(kickoffId);
+                    
+                    // Check if completed
+                    if (status.status === 'completed' || status.status === 'success') {
+                        debugLog('✅ Results ready!');
+                        isPolling = false;
+                        return status;
+                    }
+                    
+                    // Check if failed
+                    if (status.status === 'failed' || status.status === 'error') {
+                        isPolling = false;
+                        throw new Error(`Screening failed: ${status.error || 'Unknown error'}`);
+                    }
+                    
+                    // Still processing
+                    const progress = Math.min(70 + (i * (25 / maxAttempts)), 95);
+                    debugLog(`⏳ Attempt ${i + 1}/${maxAttempts}: ${status.status || 'processing'}...`);
+                    updateProgress(progress, `Processing... (${i + 1}/${maxAttempts})`);
+                    
+                    // Wait before next poll
+                    await new Promise(resolve => setTimeout(resolve, interval));
+                    
+                } catch (error) {
+                    isPolling = false;
+                    debugLog('❌ Poll error:', error);
+                    throw error;
+                }
+            }
+            
+            isPolling = false;
+            throw new Error('Timeout: Screening took too long. Please try again.');
+        }
+
         // ============ SUBMIT ============
         elements.submitBtn.addEventListener('click', handleSubmit);
 
@@ -476,6 +559,11 @@
                 showError('Please upload at least one resume');
                 elements.dropzone.classList.add('shake');
                 setTimeout(() => elements.dropzone.classList.remove('shake'), 500);
+                return;
+            }
+
+            if (isPolling) {
+                showError('Already screening. Please wait...');
                 return;
             }
 
@@ -502,7 +590,7 @@
 
                 updateProgress(30, 'Calling CrewAI API...');
                 
-                // ============ ✅ FIXED: Use /kickoff endpoint ============
+                // Call /kickoff endpoint
                 const fullUrl = `${CONFIG.CREWAI_API_URL}${CONFIG.CREWAI_ENDPOINT}`;
                 debugLog(`📡 Full URL: ${fullUrl}`);
                 
@@ -517,15 +605,6 @@
                 });
 
                 debugLog(`📡 Response status: ${response.status}`);
-                debugLog('📡 Response headers:', Object.fromEntries(response.headers));
-
-                updateProgress(60, 'AI is analyzing with SBERT + Gemini...');
-
-                // Check if response is HTML (404 page)
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('text/html')) {
-                    throw new Error('API endpoint not found. Please check your CrewAI URL.');
-                }
 
                 if (!response.ok) {
                     let errorData;
@@ -541,10 +620,28 @@
                 const data = await response.json();
                 debugLog('✅ Success! Data received:', data);
                 
-                updateProgress(90, 'Generating rankings...');
-                displayResults(data);
-                updateProgress(100, 'Complete! 🎉');
-                elements.statusText.innerHTML = '<i class="fas fa-check-circle text-green-600 mr-1"></i> Complete';
+                // ============ POLL FOR RESULTS ============
+                if (data.kickoff_id) {
+                    debugLog(`📋 Kickoff ID: ${data.kickoff_id}`);
+                    
+                    updateProgress(70, 'Screening in progress...');
+                    
+                    // Poll for results
+                    const results = await pollResults(data.kickoff_id);
+                    
+                    debugLog('📊 Final results:', results);
+                    updateProgress(90, 'Generating rankings...');
+                    
+                    // Display the results
+                    displayResults(results);
+                    updateProgress(100, 'Complete! 🎉');
+                    elements.statusText.innerHTML = '<i class="fas fa-check-circle text-green-600 mr-1"></i> Complete';
+                } else {
+                    // If no kickoff_id, try to display data directly
+                    displayResults(data);
+                    updateProgress(100, 'Complete! 🎉');
+                    elements.statusText.innerHTML = '<i class="fas fa-check-circle text-green-600 mr-1"></i> Complete';
+                }
                 
                 const endTime = Date.now();
                 const timeTaken = ((endTime - startTime) / 1000).toFixed(1);
@@ -562,6 +659,7 @@
             } finally {
                 elements.submitBtn.disabled = false;
                 elements.submitBtn.innerHTML = '<i class="fas fa-magic mr-2"></i>Screen Resumes';
+                isPolling = false;
             }
         }
 
@@ -629,7 +727,7 @@
             if (candidates.length > 0) {
                 const sorted = candidates.sort((a, b) => (b.score || 0) - (a.score || 0));
                 elements.resultsContent.innerHTML = sorted.map((c, index) => `
-                    <div class="bg-white rounded-xl p-6 border border-gray-200 hover:shadow-lg transition-all transform hover:scale-[1.01] hover:border-blue-300">
+                    <div class="result-card bg-white rounded-xl p-6 border border-gray-200 hover:shadow-lg hover:border-blue-300">
                         <div class="flex items-start justify-between flex-wrap gap-2">
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-3 mb-2 flex-wrap">
